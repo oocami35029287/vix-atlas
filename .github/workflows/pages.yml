@@ -4,7 +4,7 @@ on:
     branches: [main]
   workflow_dispatch:
   workflow_run:
-    workflows: ['Refresh market data']
+    workflows: ['Refresh market data', 'Refresh chip research']
     types: [completed]
 permissions:
   contents: read
@@ -27,7 +27,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node test_engine.cjs
+      - run: node test_engine.cjs && node --test tests/test_research.cjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -p 'test_*.py'
+      - run: python scripts/check_public_assets.py
       - name: Prepare static files
         run: |
           mkdir -p public

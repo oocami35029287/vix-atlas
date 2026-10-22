@@ -3,11 +3,12 @@ on:
   workflow_dispatch:
     inputs:
       symbols:
-        description: 'Tickers separated by commas (US or Taiwan), maximum 30'
-        required: true
-        default: 'SPY,QQQ,AAPL,NVDA,MSFT,TSLA,AMD,2330.TW,2317.TW,2454.TW'
+        description: 'Tickers separated by commas (US or Taiwan), maximum 300; blank refreshes curated 200'
+        required: false
+        default: ''
   schedule:
     - cron: '30 23 * * 1-5'
+    - cron: '15 9 * * 1-5'
 permissions:
   contents: write
 concurrency:
@@ -24,8 +25,18 @@ jobs:
       - run: pip install 'requests>=2.32,<3'
       - name: Refresh selected datasets
         env:
-          REQUESTED_SYMBOLS: ${{ inputs.symbols || 'SPY,QQQ,AAPL,NVDA,MSFT,TSLA,AMD,2330.TW,2317.TW,2454.TW' }}
-        run: python refresh_data.py --symbols "$REQUESTED_SYMBOLS"
+          REQUESTED_SYMBOLS: ${{ inputs.symbols }}
+          SCHEDULE_EXPR: ${{ github.event.schedule }}
+        run: |
+          if [ -n "$REQUESTED_SYMBOLS" ]; then
+            python refresh_data.py --symbols "$REQUESTED_SYMBOLS"
+          elif [ "$SCHEDULE_EXPR" = '15 9 * * 1-5' ]; then
+            python refresh_data.py --watchlist --market TW
+          elif [ "$SCHEDULE_EXPR" = '30 23 * * 1-5' ]; then
+            python refresh_data.py --watchlist --market US
+          else
+            python refresh_data.py --watchlist
+          fi
       - name: Commit updated data
         run: |
           git config user.name 'github-actions[bot]'

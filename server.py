@@ -50,20 +50,29 @@ def load_data(symbol, start, end):
             continue
         # Exclude the current exchange day: its final daily close may not be published.
         if start <= day <= end and day < datetime.now(zone).date().isoformat():
-            prices.append({"date": day, "open": op, "close": cl})
+            prices.append({"date": day, "open": op, "close": cl,
+                           "high": quote.get("high", [None]*len(result["timestamp"]))[i],
+                           "low": quote.get("low", [None]*len(result["timestamp"]))[i],
+                           "volume_shares": quote.get("volume", [None]*len(result["timestamp"]))[i]})
+    vix = [r for r in load_vix() if r["date"] <= end]
+    if len(prices) < 2:
+        raise ValueError("所選期間有效股價不足兩筆。")
+    return {"schema_version": 2, "symbol": symbol, "currency": meta.get("currency", ""),
+            "name": meta.get("shortName", symbol), "timezone": meta["exchangeTimezoneName"],
+            "price_adjustment": "split-adjusted; cash dividends excluded", "prices": sorted(prices, key=lambda r:r["date"]),
+            "vix": vix, "invalid": invalid,
+            "source": "Yahoo Finance / Cboe", "fetchedAt": datetime.now(timezone.utc).isoformat()}
+
+
+@lru_cache(maxsize=1)
+def load_vix():
     vix_response = requests.get("https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv", timeout=25)
     vix_response.raise_for_status()
     vix = []
     for row in csv.DictReader(io.StringIO(vix_response.text.lstrip("\ufeff"))):
         day = datetime.strptime(row["DATE"], "%m/%d/%Y").date().isoformat()
-        if day <= end:
-            vix.append({"date": day, "close": float(row["CLOSE"])})
-    if len(prices) < 2:
-        raise ValueError("所選期間有效股價不足兩筆。")
-    return {"symbol": symbol, "currency": meta.get("currency", ""),
-            "name": meta.get("shortName", symbol), "prices": sorted(prices, key=lambda r:r["date"]),
-            "vix": sorted(vix, key=lambda r:r["date"]), "invalid": invalid,
-            "source": "Yahoo Finance / Cboe", "fetchedAt": datetime.now(timezone.utc).isoformat()}
+        vix.append({"date": day, "close": float(row["CLOSE"])})
+    return sorted(vix, key=lambda r:r["date"])
 
 
 class Handler(SimpleHTTPRequestHandler):
