@@ -138,7 +138,7 @@ async function loadPrice(e){
 }
 async function fetchUniverse(rev=false){
  if($('dataMode').value==='latest')throw Error('歷史營收／籌碼研究請選「代理研究」或提供已保存的歷史版本；最新資料不能證明歷史公布時間。');
- SelectionModel.validate(stockSlots);const ids=stockSlots.map(s=>s.symbol);
+ const ids=SelectionModel.researchSymbols(stockSlots);
  if(!ids.length||ids.length>5||ids.some(x=>!/^\d{4,6}\.TW(O)?$/.test(x)))throw Error('請提供 1–5 檔台灣上市／上櫃股票代號');
  const end=$('end').value,start=new Date(Date.parse($('start').value)-(rev?3*366:400)*864e5).toISOString().slice(0,10),symbols=[],manifests=[];
  // Sequential bounded collection: any failed source cancels the new run, preserving previous results.
@@ -209,12 +209,13 @@ async function loadCatalog(){
  $('snapshotCount').textContent=catalog.length.toLocaleString();$('snapshotAsOf').textContent='台股 '+catalog.filter(c=>c.market==='TW').length+' · 美股 '+catalog.filter(c=>c.market==='US').length;
  $('dataHealth').textContent='目錄來源成功 '+ok+'/2。行情直接從 FinMind 讀入你的瀏覽器；目前交易所日期的日線保守排除，來源完成狀態仍未認證。快取過期不會把舊版本當作新版本。嚴格歷史查詢只讀取此瀏覽器曾保存的版本，缺少時不回退最新資料。來源使用限個人研究，不再散布原始觀測。';if(strategy==='data')renderCatalog();renderStockSlots();
 }
-function slotSignature(){return JSON.stringify({slots:stockSlots,market:$('selectionMarket').value,pool:$('poolSource').value,size:$('poolSize').value,target:$('targetSlots').value,institution:$('autoInstitution').value,mode:$('dataMode').value,as_of:$('asOf').value});}
-function invalidateSelection(){pendingSelection=null;$('applyRecommendations').disabled=true;if(screenResult)$('autoStale').hidden=false;if(scanAbort)scanAbort.abort();}
+function slotSignature(){return JSON.stringify({slots:SelectionModel.fingerprint(stockSlots),market:$('selectionMarket').value,pool:$('poolSource').value,size:$('poolSize').value,target:$('targetSlots').value,institution:$('autoInstitution').value,mode:$('dataMode').value,as_of:$('asOf').value});}
+function persistStockSlots(){try{localStorage.setItem('atlas-research-slots-v1',SelectionModel.serialize(stockSlots,$('selectionMarket').value));}catch{/* Selection stays in this tab if browser storage is unavailable. */}}
+function invalidateSelection(){if($('selectionTransfer'))$('selectionTransfer').hidden=true;pendingSelection=null;$('applyRecommendations').disabled=true;if(screenResult)$('autoStale').hidden=false;if(scanAbort)scanAbort.abort();}
 function renderStockSlots(){
  const market=$('selectionMarket').value,busy=!!scanAbort;
  stockSlots=stockSlots.map(s=>{const c=catalog.find(c=>c.provider_symbol===s.symbol);return c?{...s,name:c.name_zh||c.name_en||s.symbol,industry:c.industry||'unknown',market:c.market}:s;});
- $('slotCount').textContent=stockSlots.length+' / 5 格';$('addSlot').disabled=stockSlots.length>=5||busy;
+ persistStockSlots();$('slotCount').textContent=stockSlots.length+' / 5 格';$('addSlot').disabled=stockSlots.length>=5||busy;
  $('stockSlots').innerHTML=stockSlots.map((s,i)=>`<div class="stock-slot ${s.locked?'locked':''}"><div class="slot-toolbar"><span>股票 ${i+1}</span><div><button type="button" data-slot-lock="${i}" aria-pressed="${!!s.locked}" ${!s.symbol||busy?'disabled':''}>${s.locked?'已鎖定':'鎖定'}</button><button type="button" data-slot-remove="${i}" aria-label="刪除股票 ${i+1}" ${stockSlots.length===1||s.locked||busy?'disabled':''}>×</button></div></div><label class="sr-only" for="stockSlot${i}">股票 ${i+1} 公司或完整代號</label><input id="stockSlot${i}" data-slot-input="${i}" list="slotSuggestions${i}" value="${esc(s.draft??s.symbol)}" placeholder="公司名稱／完整代號" autocomplete="off" ${s.locked||busy?'disabled':''}><datalist id="slotSuggestions${i}"></datalist><div class="hint slot-detail">${esc(s.name||'尚未選股')}${s.symbol?' · '+esc(s.symbol.endsWith('.TWO')?'上櫃':s.market==='US'?'美國':'上市'):''}${s.origin==='auto'?' · 自動研究入選':''}${s.audit?.as_of?'<br>截止 '+esc(s.audit.as_of):''}</div><div class="slot-moves"><button type="button" data-slot-up="${i}" ${i===0||busy?'disabled':''}>↑ 上移</button><button type="button" data-slot-down="${i}" ${i===stockSlots.length-1||busy?'disabled':''}>↓ 下移</button>${s.symbol?`<button type="button" data-slot-price="${i}">查看布林 ↗</button>`:''}</div></div>`).join('');
  const suggestions=(input,i)=>{const q=input.value.trim().toLowerCase();$('slotSuggestions'+i).innerHTML=catalog.filter(c=>c.market===market&&(!q||[c.provider_symbol,c.name_zh,c.name_en].some(v=>v?.toLowerCase().includes(q)))).slice(0,25).map(c=>`<option value="${esc(c.provider_symbol)}" label="${esc(c.name_zh||c.name_en)} · ${esc(c.exchange)}"></option>`).join('');};
  document.querySelectorAll('[data-slot-input]').forEach(input=>{const i=+input.dataset.slotInput;suggestions(input,i);input.oninput=()=>{stockSlots[i]={...stockSlots[i],symbol:'',draft:input.value,audit:null};input.setCustomValidity('');invalidateSelection();suggestions(input,i);};input.onchange=()=>{try{const stock=SelectionModel.resolve(input.value,catalog,{market});stockSlots=SelectionModel.set(stockSlots,i,stock);stockSlots[i].draft=undefined;invalidateSelection();renderStockSlots();}catch(e){input.setCustomValidity(e.message);status(e.message,true);}};});
@@ -249,7 +250,7 @@ async function runAutoScan(){
   const u=rawAuto?JSON.parse(JSON.stringify(rawAuto)):await collectAutoUniverse(pool,asOf,controller);if(controller.signal.aborted||signature!==slotSignature())throw Error('CANCELLED · 設定已變更，本次不更新清單');
   const result=AutoScreen.screen(u,{as_of:asOf,availability:availability(),institution:$('autoInstitution').value==='yes',slots:target,locked:stockSlots.filter(s=>s.locked),held_symbols:u.held_symbols??[]});
   result.manifest={...u.manifest,...ATLAS_BUILD,input_hash:await AtlasData.hash(u),rule_version:AutoScreen.VERSION,selection_basis:'current snapshot; never a historical portfolio',created_at:new Date().toISOString()};if(controller.signal.aborted||signature!==slotSignature())throw Error('CANCELLED · 設定已變更，本次不更新清單');screenResult=result;renderAutoResult(result);
-  if(result.coverage_complete){const plan=SelectionModel.plan(stockSlots,result.recommendations,target);pendingSelection={...plan,signature};$('replacementPreview').innerHTML=plan.changes.length?'<p>確認後將更新：</p><ul>'+plan.changes.map(c=>`<li>第 ${c.slot} 格：${esc(c.from||'空格')} → ${esc(c.to||'空格')}</li>`).join('')+'</ul>':'<p>目前格子無需替換。</p>';$('replacementPreview').innerHTML+='<p>未填滿 '+plan.unfilled+' 格；不放寬門檻湊數。鎖定格完整保留。</p>';$('applyRecommendations').disabled=plan.changes.length===0;}
+  if(result.coverage_complete){const plan=SelectionModel.plan(stockSlots,result.recommendations,target);pendingSelection={...plan,signature};$('replacementPreview').innerHTML=plan.changes.length?'<p>確認後將更新：</p><ul>'+plan.changes.map(c=>`<li>第 ${c.slot} 格：${esc(c.from||'空格')} → ${esc(c.to||'空格')}</li>`).join('')+'</ul>':'<p>目前格子無需替換。</p>';$('replacementPreview').innerHTML+='<p>未填滿 '+plan.unfilled+' 格；不放寬門檻湊數。鎖定格完整保留。</p>';$('applyRecommendations').disabled=plan.accepted.length===0;if(!plan.accepted.length){pendingSelection=null;$('replacementPreview').textContent=result.recommendations.length?'推薦股票已在鎖定格中，沒有新的股票需要匯入；原清單保留。':'本次沒有合格推薦可匯入，原股票清單保留。可調整觀察池後重新掃描。';}}
   else{$('replacementPreview').textContent='候選資料不完整，本次不建立新排名或套用清單。上一個研究結果與持倉紀錄保留。';}
   $('scanProgress').textContent='掃描完成 · '+result.counts.scanned+' 個候選 · '+result.counts.recommendable+' 個可推薦';status(result.coverage_complete?'本次快照研究完成 · 預覽後可確認套用':'PARTIAL · 資料不完整，本次不更新股票格',!result.coverage_complete);
  }finally{scanAbort=null;$('cancelScan').hidden=true;renderStockSlots();}
@@ -294,7 +295,16 @@ $('selectionMarket').onchange=()=>{invalidateSelection();if(stockSlots.some(s=>s
 for(const id of ['poolSource','poolSize','targetSlots','autoInstitution'])$(id).onchange=()=>{invalidateSelection();updateScanEstimate();};
 $('dataMode').addEventListener('change',invalidateSelection);$('asOf').addEventListener('change',invalidateSelection);
 $('cancelScan').onclick=()=>scanAbort?.abort();
-$('applyRecommendations').onclick=()=>{if(!pendingSelection||pendingSelection.signature!==slotSignature()){invalidateSelection();status('清單或設定已變更，請重新掃描。',true);return;}stockSlots=pendingSelection.slots;pendingSelection=null;$('applyRecommendations').disabled=true;renderStockSlots();$('replacementPreview').textContent='已依確認的預覽更新股票格，未建立委託。';status('已套用研究清單 · 鎖定格保留');};
+$('applyRecommendations').onclick=()=>{
+ if(!pendingSelection||pendingSelection.signature!==slotSignature()){invalidateSelection();status('清單或設定已變更，請重新掃描。',true);return;}
+ const accepted=pendingSelection.accepted;if(!accepted.length){invalidateSelection();status('本次沒有新的推薦可匯入，原清單保留。');return;}
+ stockSlots=pendingSelection.slots;pendingSelection=null;rawRev=null;rawChip=null;loadedUniverse=null;lastResult=null;$('revFile').value='';$('chipFile').value='';$('applyRecommendations').disabled=true;
+ renderStockSlots();setStrategy('rev');const ids=SelectionModel.researchSymbols(stockSlots);
+ $('selectionTransfer').hidden=false;$('selectionTransfer').textContent='已匯入營收動能：'+ids.join('、')+'。鎖定格保留；選擇 F20／M30 後按「執行研究」。';
+ $('replacementPreview').textContent='已確認並轉入營收動能：'+ids.join('、');status('已匯入 '+accepted.length+' 檔推薦 · 目前共 '+ids.length+' 檔 · 請執行研究');
+ $('universeControls').scrollIntoView({block:'start',behavior:'smooth'});
+};
 $('autoFile').onchange=async e=>{try{const f=e.target.files[0];if(!f)return;if(f.size>30e6)throw Error('候選資料包限30MB');const u=JSON.parse((await f.text()).replace(/^\uFEFF/,''));ChipEngine.validateUniverse(u);if(u.symbols.length>30)throw Error('候選池最多30檔');rawAuto=u;invalidateSelection();status('已匯入 '+u.symbols.length+' 檔候選包；只在本機處理。');}catch(e){status(e.message,true);}};
 $('exportScreen').onclick=()=>{if(screenResult)download(JSON.stringify(screenResult),'auto-screen-research.json','application/json');};
+try{const saved=SelectionModel.restore(localStorage.getItem('atlas-research-slots-v1'));if(saved){stockSlots=saved.slots;$('selectionMarket').value=saved.market;}}catch{}
 renderStockSlots();updateScanEstimate();
