@@ -11,7 +11,7 @@ def build(output='public'):
     target.mkdir(parents=True, exist_ok=True)
     page = (ROOT / 'page.html').read_text()
     files = ['engine.js', 'research_core.js', 'bb_engine.js', 'chip_engine.js',
-             'research_statistics.js', 'rev_mom_engine.js', 'data_client.js']
+             'research_statistics.js', 'rev_mom_engine.js', 'data_client.js', 'selection_model.js', 'screen_engine.js']
     try:
         sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, stderr=subprocess.DEVNULL, text=True).strip()
         dirty = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True))

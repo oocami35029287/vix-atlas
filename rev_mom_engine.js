@@ -133,6 +133,6 @@ const RevMomEngine=(()=>{
   if(p.lot<1000&&!(u.odd_lot_execution_evidence&&u.odd_lot_fee_evidence&&u.execution_market==='TW-odd-lot'))for(const e of base.orderEvents)if(e.status==='CANCELLED')e.reason='ODD_LOT_EVIDENCE_REQUIRED';
   return {...base,eventLog:g.eventLog,stops,options:p,pendingSignals:g.signals.filter(s=>!s.executionDate),spec,status:'RESEARCH_ONLY'};
  }
- return {spec,config,monthIndex,monthName,available,select,revenueFeatures,singleQuarters,ttm,indicators,rank,createSignals,simulatePortfolio};
+ return {spec,config,monthIndex,monthName,available,select,known,ifp,revenueFeatures,singleQuarters,ttm,indicators,rank,createSignals,simulatePortfolio};
 })();
 if(typeof module!=='undefined')module.exports=RevMomEngine;

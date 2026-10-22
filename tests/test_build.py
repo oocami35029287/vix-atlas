@@ -10,7 +10,7 @@ class OfflineBuild(unittest.TestCase):
     def test_no_data_clean_checkout(self):
         with tempfile.TemporaryDirectory() as folder:
             target=Path(folder)
-            for name in ['build.py','page.html','style.css','app.js','engine.js','research_core.js','bb_engine.js','chip_engine.js','research_statistics.js','rev_mom_engine.js','data_client.js']:
+            for name in ['build.py','page.html','style.css','app.js','engine.js','research_core.js','bb_engine.js','chip_engine.js','research_statistics.js','rev_mom_engine.js','data_client.js','selection_model.js','screen_engine.js']:
                 shutil.copy(ROOT/name,target/name)
             env={**os.environ,'HTTP_PROXY':'http://127.0.0.1:1','HTTPS_PROXY':'http://127.0.0.1:1','ALL_PROXY':'http://127.0.0.1:1'}
             subprocess.run(['python','build.py'],cwd=target,env=env,check=True,capture_output=True)

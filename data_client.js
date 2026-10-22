@@ -1,7 +1,7 @@
 /* Browser-to-provider data access. Source observations never enter Git/Pages/CI. */
 const AtlasData=(()=>{
  const C=typeof module!=='undefined'?require('./research_core.js'):ResearchCore;
- const datasets=new Set(['TaiwanStockPrice','USStockPrice','TaiwanStockInfo','USStockInfo','TaiwanStockMonthRevenue','TaiwanStockFinancialStatements','TaiwanStockInstitutionalInvestorsBuySell','TaiwanStockMarginPurchaseShortSale']);
+ const datasets=new Set(['TaiwanStockPrice','USStockPrice','TaiwanStockInfo','USStockInfo','TaiwanStockMonthRevenue','TaiwanStockFinancialStatements','TaiwanStockBalanceSheet','TaiwanStockCashFlowsStatement','TaiwanStockInstitutionalInvestorsBuySell','TaiwanStockMarginPurchaseShortSale']);
  const SCHEMA='1.4',ENDPOINT='https://api.finmindtrade.com/api/v4/data';
  class DataError extends Error{constructor(code,message){super(code+' · '+message);this.code=code;}}
  const fail=(code,msg)=>{throw new DataError(code,msg);};
@@ -23,7 +23,7 @@ const AtlasData=(()=>{
   async pointer(k){return this.pointers.get(k);}
   async resolve(id){return this.revisions.get(id);}
   async save(k,e,expires=Date.parse(e.fetched_at)+e.ttl_ms){if(!this.revisions.has(e.dataset_revision))this.revisions.set(e.dataset_revision,clone(e));this.pointers.set(k,{revision:e.dataset_revision,expires});}
-  async find(r){const target={...r,mode:'historical_asof'};return [...this.revisions.values()].filter(e=>e.request.dataset===target.dataset&&e.request.symbol===target.symbol&&e.request.start===target.start&&e.request.end===target.end&&e.request.permission===target.permission&&e.request.adjustment===target.adjustment&&e.request.currency===target.currency&&e.request.mode!=='proxy'&&Date.parse(e.fetched_at)<=Date.parse(r.as_of)).sort((a,b)=>Date.parse(b.fetched_at)-Date.parse(a.fetched_at))[0];}
+  async find(r){const target={...r,mode:'historical_asof'};return [...this.revisions.values()].filter(e=>e.request.schema_version===target.schema_version&&e.request.provider===target.provider&&e.request.dataset===target.dataset&&e.request.symbol===target.symbol&&e.request.start===target.start&&e.request.end===target.end&&e.request.permission===target.permission&&e.request.adjustment===target.adjustment&&e.request.currency===target.currency&&e.request.mode!=='proxy'&&Date.parse(e.fetched_at)<=Date.parse(r.as_of)).sort((a,b)=>Date.parse(b.fetched_at)-Date.parse(a.fetched_at))[0];}
   async clear(){this.pointers.clear();this.revisions.clear();}
  }
  class BrowserStore{
@@ -35,9 +35,9 @@ const AtlasData=(()=>{
   async find(r){const all=await this.op('revisions','readonly',s=>s.getAll());if(!all)return this.memory.find(r);const temp=new MemoryStore();for(const e of [...all,...this.memory.revisions.values()])temp.revisions.set(e.dataset_revision,e);return temp.find(r);}
   async clear(){await this.op('pointers','readwrite',s=>s.clear());await this.op('revisions','readwrite',s=>s.clear());await this.memory.clear();}
  }
- function createClient({fetcher=globalThis.fetch?.bind(globalThis),store=new BrowserStore(),now=()=>Date.now(),digest=hash}={}){
+ function createClient({fetcher=globalThis.fetch?.bind(globalThis),store=new BrowserStore(),now=()=>Date.now(),digest=hash,wait=ms=>new Promise(resolve=>setTimeout(resolve,ms))}={}){
   const pending=new Map(),calls=[];let failures=0,openUntil=0;
-  async function get(input,{refresh=false}={}){
+  async function get(input,{refresh=false,queue=false,signal,onWait}={}){
    const r=request(input),key=cacheKey(r);
    if(r.mode==='historical_asof'){
     const e=await store.find(r);if(!e)fail('HISTORICAL_VERSION_UNAVAILABLE','此時點沒有已保存的版本；不會改用最新資料');
@@ -47,16 +47,16 @@ const AtlasData=(()=>{
    if(pending.has(key))return clone(await pending.get(key));
    const task=(async()=>{
     if(now()<openUntil)fail('UPSTREAM_UNAVAILABLE','資料來源暫時停止回應，請稍後重試');
-    while(calls.length&&calls[0]<now()-60000)calls.shift();if(calls.length>=24)fail('RATE_LIMITED','每分鐘最多 24 次資料請求；請稍候');calls.push(now());
+    while(true){if(signal?.aborted)fail('CANCELLED','已取消本次資料收集');while(calls.length&&calls[0]<=now()-60000)calls.shift();if(calls.length<24){calls.push(now());break;}if(!queue)fail('RATE_LIMITED','每分鐘最多 24 次資料請求；請稍候');const remaining=Math.max(1,calls[0]+60001-now());onWait?.(remaining);await wait(Math.min(1000,remaining));}
     const url=new URL(ENDPOINT);url.searchParams.set('dataset',r.dataset);if(r.symbol)url.searchParams.set('data_id',r.symbol.replace(/\.TW(O)?$/,''));if(r.start){url.searchParams.set('start_date',r.start);url.searchParams.set('end_date',r.end);}
     let response,j;
-    try{response=await fetcher(url.href,{signal:AbortSignal.timeout(45000),credentials:'omit'});if(!response.ok){if(response.status===429)fail('RATE_LIMITED','來源流量限制');if([401,402,403].includes(response.status))fail('AUTH_REQUIRED','來源要求授權，請使用已取得使用權的本機資料包');fail('UPSTREAM_UNAVAILABLE','來源 HTTP '+response.status);}j=await response.json();}
-    catch(e){if(e instanceof DataError)throw e;fail('UPSTREAM_UNAVAILABLE','無法連接來源，請稍後再試或匯入自己的資料');}
+    try{response=await fetcher(url.href,{signal:signal?AbortSignal.any([signal,AbortSignal.timeout(45000)]):AbortSignal.timeout(45000),credentials:'omit'});if(!response.ok){if(response.status===429)fail('RATE_LIMITED','來源流量限制');if([401,402,403].includes(response.status))fail('AUTH_REQUIRED','來源要求授權，請使用已取得使用權的本機資料包');fail('UPSTREAM_UNAVAILABLE','來源 HTTP '+response.status);}j=await response.json();}
+    catch(e){if(signal?.aborted)fail('CANCELLED','已取消本次資料收集');if(e instanceof DataError)throw e;fail('UPSTREAM_UNAVAILABLE','無法連接來源，請稍後再試或匯入自己的資料');}
     if(j.status!==200){if([401,402,403].includes(j.status))fail('AUTH_REQUIRED','來源要求授權');if(j.status===429)fail('RATE_LIMITED','來源流量限制');fail('UPSTREAM_UNAVAILABLE','來源未完成請求');}
     if(!Array.isArray(j.data)||!j.data.length)fail('NO_DATA','此代號或期間沒有資料');
     if(j.data.length>250000||JSON.stringify(j.data).length>15e6)fail('PARTIAL','回應超出單次研究預算');
     const fetched_at=new Date(now()).toISOString(),revision=await digest({request:r,rows:j.data});const existing=await store.resolve(revision);
-    const dated=j.data.map(x=>x.date).filter(C.validDate).sort();if(r.dataset.endsWith('Price')&&dated.length&&r.end&&Date.parse(r.end)-Date.parse(dated.at(-1))>14*864e5)fail('STALE','來源最後日期距請求結束超過 14 日；本次研究不使用此過舊資料');const e={schema_version:SCHEMA,request_id:globalThis.crypto?.randomUUID?.()??String(now()),request:r,mode:r.mode,dataset:r.dataset,dataset_revision:revision,source:'FinMind; original providers TWSE / TPEx / US market sources',source_url:ENDPOINT,source_asof:dated.at(-1)??null,fetched_at,first_seen_at:existing?.first_seen_at??fetched_at,calendar_id:r.symbol.endsWith('.TW')||r.symbol.endsWith('.TWO')||r.dataset.startsWith('Taiwan')?'TW-market-proxy':'US-market-proxy',exchange_timezone:r.dataset.startsWith('Taiwan')?'Asia/Taipei':'America/New_York',adjustment:r.adjustment,currency:r.currency,evidence_level:r.mode==='proxy'?'proxy':'observed_snapshot',license_scope:'personal research directly from source; no redistribution or mirror',cache_state:'network',coverage:{requested_start:r.start||null,requested_end:r.end||null,start:dated[0]??null,end:dated.at(-1)??null,warmup:'included in requested range; strategy validates complete sessions',missing:null,source_calendar_complete:false,corporate_actions:'unverified',historical_vintages:false},ttl_ms:r.dataset.endsWith('Info')?86400000:r.dataset.includes('Revenue')||r.dataset.includes('Financial')?3600000:900000,data:j.data};
+    const dated=j.data.map(x=>x.date).filter(C.validDate).sort();if(r.dataset.endsWith('Price')&&dated.length&&r.end&&Date.parse(r.end)-Date.parse(dated.at(-1))>14*864e5)fail('STALE','來源最後日期距請求結束超過 14 日；本次研究不使用此過舊資料');const e={schema_version:SCHEMA,request_id:globalThis.crypto?.randomUUID?.()??String(now()),request:r,mode:r.mode,dataset:r.dataset,dataset_revision:revision,source:'FinMind; original providers TWSE / TPEx / US market sources',source_url:ENDPOINT,source_asof:dated.at(-1)??null,fetched_at,first_seen_at:existing?.first_seen_at??fetched_at,calendar_id:r.symbol.endsWith('.TW')||r.symbol.endsWith('.TWO')||r.dataset.startsWith('Taiwan')?'TW-market-proxy':'US-market-proxy',exchange_timezone:r.dataset.startsWith('Taiwan')?'Asia/Taipei':'America/New_York',adjustment:r.adjustment,currency:r.currency,evidence_level:r.mode==='proxy'?'proxy':'observed_snapshot',license_scope:'personal research directly from source; no redistribution or mirror',cache_state:'network',coverage:{requested_start:r.start||null,requested_end:r.end||null,start:dated[0]??null,end:dated.at(-1)??null,warmup:'included in requested range; strategy validates complete sessions',missing:null,source_calendar_complete:false,corporate_actions:'unverified',historical_vintages:false},ttl_ms:r.dataset.endsWith('Info')?86400000:r.dataset.includes('Revenue')||r.dataset.includes('Financial')||r.dataset.includes('Balance')||r.dataset.includes('CashFlows')?3600000:900000,data:j.data};
     // Same request + unchanged payload resolves to the original immutable observation.
     const resolved=existing??e;await store.save(key,resolved,now()+e.ttl_ms);failures=0;return clone({...resolved,storage_scope:store.persistence??'session'});
    })().catch(e=>{if(e.code==='UPSTREAM_UNAVAILABLE'&&++failures>=3)openUntil=now()+60000;throw e;}).finally(()=>pending.delete(key));
@@ -77,13 +77,20 @@ const AtlasData=(()=>{
   });
  }
  function financialRows(e){
-  const periods=new Map();for(const r of e.data){if(!['Revenue','OperatingIncome'].includes(r.type)||!C.validDate(r.date))continue;const y=+r.date.slice(0,4),q=Math.ceil(+r.date.slice(5,7)/3),key=y+'-Q'+q;if(!periods.has(key))periods.set(key,{period:key,revenue:null,operating_income:null,scope:'consolidated-provider-proxy',currency:'TWD',unit:'TWD',comparable:true,value_kind:'single',available_from:(q===4?(y+1)+'-04-01':y+'-'+({1:'05-16',2:'08-15',3:'11-15'}[q]))+'T23:59:59+08:00',availability_basis:'proxy',timestamp_precision:'date',source_timezone:'Asia/Taipei',date_only_conservative:true,first_seen_at:e.first_seen_at,revision_id:e.dataset_revision,availability_note:'Single-quarter provider convention and conservative reporting-date assumptions; no original vintage / publication evidence.'});periods.get(key)[r.type==='Revenue'?'revenue':'operating_income']=r.value;}
+  const periods=new Map();for(const r of e.data){if(!['Revenue','OperatingIncome','IncomeAfterTaxes'].includes(r.type)||!C.validDate(r.date))continue;const y=+r.date.slice(0,4),q=Math.ceil(+r.date.slice(5,7)/3),key=y+'-Q'+q;if(!periods.has(key))periods.set(key,{period:key,revenue:null,operating_income:null,net_income:null,scope:'consolidated-provider-proxy',currency:'TWD',unit:'TWD',comparable:true,value_kind:'single',available_from:(q===4?(y+1)+'-04-01':y+'-'+({1:'05-16',2:'08-15',3:'11-15'}[q]))+'T23:59:59+08:00',availability_basis:'proxy',timestamp_precision:'date',source_timezone:'Asia/Taipei',date_only_conservative:true,first_seen_at:e.first_seen_at,revision_id:e.dataset_revision,availability_note:'Single-quarter provider convention and conservative reporting-date assumptions; no original vintage / publication evidence.'});periods.get(key)[r.type==='Revenue'?'revenue':r.type==='OperatingIncome'?'operating_income':'net_income']=r.value;}
   return [...periods.values()].sort((a,b)=>a.period.localeCompare(b.period));
+ }
+ function qualityRows(envelope,kind){
+  const by=new Map(),mapping=kind==='cash_flows'?{CashFlowsFromOperatingActivities:'operating_cash_flow'}:{TotalAssets:'assets',Liabilities:'liabilities',Equity:'equity'};
+  for(const r of envelope.data){if(!mapping[r.type]||!C.validDate(r.date))continue;const year=+r.date.slice(0,4),q=Math.ceil(+r.date.slice(5,7)/3),period=year+'-Q'+q;
+   if(!by.has(period))by.set(period,{period,scope:'consolidated-provider-proxy',currency:'TWD',unit:'TWD',comparable:true,value_kind:kind==='cash_flows'?'cumulative':'instant',available_from:(q===4?(year+1)+'-04-01':year+'-'+({1:'05-16',2:'08-15',3:'11-15'}[q]))+'T23:59:59+08:00',availability_basis:'proxy',timestamp_precision:'date',source_timezone:'Asia/Taipei',revision_id:envelope.dataset_revision,first_seen_at:envelope.first_seen_at,date_only_conservative:true,availability_note:'Unverified original filing; cash flow uses disclosed YTD proxy convention, balance is period-end stock. Import verified period conventions for strict research.'});
+   by.get(period)[mapping[r.type]]=r.value;
+  }return [...by.values()].sort((a,b)=>a.period.localeCompare(b.period));
  }
  function joinChips(prices,institutions,margin){
   const flows=new Map(),credit=new Map((margin?.data??[]).map(r=>[r.date,r]));for(const r of institutions?.data??[]){const k=r.name==='Foreign_Investor'?'foreign_net_shares':r.name==='Investment_Trust'?'trust_net_shares':null;if(k){if(!flows.has(r.date))flows.set(r.date,{});flows.get(r.date)[k]=r.buy-r.sell;}}
   return prices.map(r=>({...r,...flows.get(r.date),margin_balance_shares:C.finite(credit.get(r.date)?.MarginPurchaseTodayBalance)?credit.get(r.date).MarginPurchaseTodayBalance*1000:null,availability_basis:'proxy'}));
  }
- return {DataError,MemoryStore,BrowserStore,request,cacheKey,hash,createClient,calendarDate,priceRows,revenueRows,financialRows,joinChips};
+ return {DataError,MemoryStore,BrowserStore,request,cacheKey,hash,createClient,calendarDate,priceRows,revenueRows,financialRows,qualityRows,joinChips};
 })();
 if(typeof module!=='undefined')module.exports=AtlasData;
