@@ -1,79 +1,73 @@
 # VIX Atlas
 
-VIX 波動率、布林通道與台股法人籌碼研究工具。GitHub Pages 可直接使用，沒有券商連線與自動下單。
+台美股價、VIX、布林、台股法人籌碼與 REV-MOM 營收動能研究工具。
 
 **網站：https://oocami35029287.github.io/vix-atlas/**
 
-## 已提供的功能
+## v1.4 的使用方式
 
-- **VIX**：保留原有 `engine.js` 日期對齊、門檻策略、績效地圖與交易明細。
-- **布林通道**：20 日／2 倍母體標準差為預設，提供下軌回歸與上軌突破；收盤確認訊號，之後開盤模擬成交。計算指標使用日期篩選之前的暖機資料，暖機期間不交易。
-- **籌碼研究**：S1 的 1/2/3 日、S2 的 3/5/10 日、S3 的 10/20/30 日；相同 S2 候選內比較 R1 與固定代號排序。六檔真實歷史的彙總、成本／T+2 敏感度、配對每日收益區塊重抽樣。
-- **資料中心**：TWSE、TPEx、Nasdaq Trader 的現存證券目錄，台股 100 檔＋美股 100 檔人工關注清單快照；搜尋得到與可回測的資料分別顯示。
-- 訊號／成交日分開、資產曲線、CSV／JSON 匯出、本機股價／籌碼包匯入、手機版及鍵盤分頁。
+1. 選股票代號與期間，按「執行回測」。未預先收錄的代號也會直接向來源查詢。
+2. 法人／營收研究先固定 1–5 檔台股母體。選「代理研究」與成交證據；嚴格成交模式會拒絕缺開盤證據的訂單。要看日線近似研究，明確選「日線代理」。
+3. REV-MOM 預設 NT$10,000,000 整張模式。F20 的 20 日為主比較，10／30 日是敏感度；M30 是獨立候選。十萬元零股模式須匯入獨立零股價格、撮合及費率證據，一般整股開盤不能代用。
+4. 可匯入自己的股價、籌碼或營收資料包；可匯出交易 CSV、帶資料／引擎雜湊及事件稽核的研究 JSON。資料只在目前瀏覽器處理，不上傳到本專案伺服器。
 
-## 研究狀態與限制
+GitHub 現行分支只保存程式、流程與合成測試。網站建置沒有真實 SPY、行情 JSON、證券目錄或預先計算的研究報表。未改寫既有 Git 歷史。先前的快照更新工作流程已停用，保留唯讀告示；舊收集／快照生成腳本已退役。
 
-籌碼報表是 **六檔現存股票的歷史代理研究，尚未通過策略採用門檻**。無歷史初次公布版本、完整下市母體、已證明的開盤漲跌停／可交易狀態與完整公司行為回補。原始股價未還原公司行為；代理報表不把它當成總報酬。T+2 延遲不會消除修訂偏差。這些結果不能解釋成可執行訊號、真正未接觸 OOS 或全市場優勢。
+## 策略與比較
 
-單股 VIX／布林採 Yahoo 拆股調整價格，不含現金股利再投入。允許零碎股，沒有真實委託排隊／漲跌停撮合；布林可配置賣出稅。VIX 的原版統一費率不單列台股證交稅。報酬以標的原幣計，不換匯。期末以收盤估值、不強制平倉；勝率只計完成交易。
+- 原 `engine.js` 的 VIX 數學、時間對齊及回歸測試保留。布林提供回歸／突破兩種模式，母體標準差，暖機後才交易，訊號之後的開盤成交。
+- S1／S2／S3 門檻與九組固定持有期保留；R1 仍只比較相同 S2 候選。120 個完整市場日暖機，股／張單位分開，缺值不補零。
+- REV-MOM-v1.1 使用 25 個連續可比正月營收。YoY、加速度與歷史 log 成長的 median／MAD 異常值自行計算；這不是分析師預期驚喜。四季營益率只使用 d0 可得的單季資料，累計欄位先轉單季，金融業排除。
+- 月報首次可得之後的首個台北 08:30 市場截止決定 d0，固定事件／TTM 快照，觀察五個市場收盤。收盤高於 SMA20 與前十日最高收盤後，每事件只嘗試一次次日開盤。重抓或更正不重開，已持有不加碼、不重設時鐘。
+- 分數為 Z／RS20／IFP5 的 50／25／25 百分位。RS20 是個股減同日期基準的二十市場日價格報酬；線上用 0050 ETF 作明示代理，匯入可提供認證指數。無法人變體為 2：1，獨立編號，不能把覆蓋差異解釋成法人增益。
+- F20 比較相同完整候選的加權／固定代號排序。M30 與相同候選、相同排序的固定 h30 比較，兩邊都要求入場 ATR 完整。配對每日組合淨報酬以日期時間區塊重抽樣：30 日、5,000 次、種子 20261022；結果均為探索。
+- M30 使用 SMA14 真實區間、SMA10 初始化的 EMA10。ATR 風險線不下移；收盤破線或相鄰兩市場收盤低於各自 EMA10，送下一開盤賣單。最晚於實際入場＋30 市場日開盤嘗試；阻塞續試，不保證停損價成交。
 
-籌碼引擎有兩種明示模式：嚴格模式拒絕缺開盤成交證據的買單，代理模式明示日線近似。新買單當日不能成交即取消，不以同一開盤替補；賣出受阻保留持倉、後續日續試。固定 h 從實際進場日起算市場交易日；最多五檔、單檔 20%、產業 40%、估計成交股數不超過先前 20 日均量 1%。賣款下一市場交易日才可重用，是研究假設而非券商交割規則。
+REV-MOM 使用 `chip_engine.js` 的共用 `simulateSignals` 帳本與撮合，沿用最多五檔、單檔 20%、產業 40%、先前 ADV20 股數 1%、整張／最低費用、分割及股利應收款。選單與預算在開盤前封存；失敗買單不替補，賣款次市場日才可再用。這是研究交割假設。
 
-## 本機啟動、建置與測試
+## 資料、可得時間與限制
+
+`data_client.js` 在瀏覽器直接讀取 FinMind API v4（已驗證台美行情、VIX、目錄、營收、財報及籌碼的瀏覽器 CORS）。不建立代理鏡像，不嵌入供應商密鑰。提供來源 envelope、SHA-256 不可變版本、IndexedDB 本機版本保存、TTL 指標、重複請求合併、固定資料集／日期範圍、每分鐘 24 次預算及三次來源失敗後 60 秒熔斷。來源要求授權或限流時明確失敗，仍可匯入已取得使用權的資料包。
+
+`latest`、`proxy`、`historical_asof` 分開。歷史模式只讀取此瀏覽器在指定時點前已保存、語意相符的最新查詢版本；沒有就回覆 `HISTORICAL_VERSION_UNAVAILABLE`，不改抓最新。這只是觀測版本證據，不證明供應商原始公布時間。瀏覽器儲存不跨裝置同步，可能受容量／隱私設定限制；清除本機資料會移除版本。未建置中央不可變歷史資料庫。
+
+線上資料缺正式歷史公布及修訂證據，因此營收／財報只能代理研究。FinMind `create_time` 是入庫日，自 2026-04-21 初始化；不是公告。舊月報代理採次月十日結束，較新的入庫日期亦採日終；財報代理採保守報告日期，來源單季會計項目假設另行標示。不可據此宣稱 point-in-time。
+
+日線保守排除當前交易所日期；其餘列仍標記 `provisional`，因為來源未提供完成證明。代理回測明示接受前日近似；嚴格 REV-MOM 僅接受有完成證據的 `final` 匯入資料。日期已過與 TTL 到期都不是完成認證。價格不重建公司行為，不能當總報酬。VIX 原版統一費率未單列台股證交稅，單股近似可用零碎股，無真實委託撮合。
+
+完整下市母體、公司行為、MOPS 原公告時刻、財報歷史修訂、零股獨立撮合與費率仍待補。資料 Gate／策略採用 Gate 未通過，不提供可採用即時訊號，沒有證明獲利或未接觸樣本外優勢。消融、制度分層及多重比較家族的完整研究報告亦未完成。
+
+來源與使用範圍：[FinMind 基本面](https://finmind.github.io/tutor/TaiwanMarket/Fundamental/)、[資料授權](https://finmind.github.io/Disclaimer/)、[使用條款](https://finmind.github.io/PrivacyPolicy/)。使用者直接向來源取個人研究資料，API 可存取不代表可再散布。原始資料不進公開 Git、Pages、Actions artifact／cache／日誌。
+
+## 建置與驗證
 
 ```bash
-python -m venv .venv
-.venv/bin/pip install -r requirements.txt
-python build.py                       # 完全離線建置
-python server.py --port 8765           # 本機查價服務
+python build.py
+python server.py --port 8765
 ```
+
+瀏覽 `http://127.0.0.1:8765`。Python 3.10+，不需要外部套件即可離線建置空狀態網站。建置只產生 `public/index.html` 與 `.nojekyll`，生成檔不追蹤；查價需要網路。
 
 ```bash
 node test_engine.cjs
-node --test tests/test_research.cjs
+node --test tests/test_*.cjs
 python -m unittest discover -s tests -p 'test_*.py'
+python build.py
 python scripts/check_public_assets.py
 ```
 
-`page.html`、`style.css`、`app.js` 為來源；`build.py` 把來源、共用引擎與預設 SPY 資料整合成 `index.html`。不要單獨編輯生成檔。`python build.py --refresh` 才會更新內建 SPY。Node 22+、Python 3.10+。
+GitHub Actions 只用合成測試、離線程式建置及程式 artifact 部署；不抓市場資料、不寫回 Git。`collectors/`、`data_pipeline/` 留作私人來源校核工具，輸出只能放 `.private/` 等受保護位置；它們不是網站依賴。
 
-### 更新行情與目錄
+## 程式索引
 
-```bash
-python refresh_data.py --watchlist
-python refresh_data.py --symbols 'TSM,AVGO,6488.TWO'
-python scripts/build_catalog.py
-python build.py
-```
-
-最多三個行情請求並行、失敗隔離、有限重試，成功快照原子替換，失敗保留舊版本；目前資料是每日歷史，非即時行情。目錄是現存清單，不是歷史 point-in-time 母體。快照只代表人工關注清單，不是全市場客觀排行。`data/stocks/*.json` 與共用 `data/vix.json` 分離，舊版 `data/{symbol}.json` 保持相容。
-
-GitHub Actions 的 **Refresh market data** 可由具有 repo 權限者手動執行，也有台美市場分流排程；快照更新後自動部署 Pages。頁面本身不具 GitHub 寫入憑證。
-
-### 私人籌碼研究
-
-```bash
-python scripts/build_chip_snapshot.py         # 原始回應只存 .private/
-python scripts/run_chip_research.py           # 共用 Node 引擎，輸出衍生彙總
-```
-
-研究樣本：2330.TW、2317.TW、2454.TW、5347.TWO、5483.TWO、6488.TWO。官方／備援單位交叉比對見 `data/source_checks.json`。`--resume` 可重用本機已保存的原始回應。需要真正的版本歷史時，應使用受保護的長期儲存；臨時 CI 環境不會建立歷史首次發布證據。
-
-FinMind 的 API 使用權不包含任意再散布原始資料；本專案只公開分析彙總，`.private/`、原始觀測及個人匯入資料都不發布。非商業研究使用；原資料機關 TWSE／TPEx、備援服務 FinMind。參考：[FinMind 資料授權](https://finmind.github.io/Disclaimer/)、[方案與使用範圍](https://finmind.github.io/Pricing/)、[TWSE 使用條款](https://www.twse.com.tw/zh/terms/use.html)、[政府資料開放授權](https://data.gov.tw/license)。網站資料集只有在適用的來源授權允許時才能作其他用途，不能把程式可抓取解釋為已取得資料再利用權。
-
-## 主要檔案
-
-| 功能 | 檔案 |
+| 檔案 | 用途 |
 | --- | --- |
-| 原 VIX 引擎／測試 | `engine.js`、`test_engine.cjs` |
-| 布林／共用帳本 | `bb_engine.js`、`research_core.js` |
-| 籌碼特徵、as-of、排序與撮合 | `chip_engine.js` |
-| 可重現統計 | `research_statistics.js` |
-| 官方／備援讀取 | `collectors/` |
-| 正規化與版本資料契約 | `data_pipeline/`、`docs/data_contract.md` |
-| 研究、更新與公開檢查 | `scripts/` |
-| 單元／契約測試 | `tests/` |
-| 部署與資料排程 | `.github/workflows/` |
-
-完整雲端專案索引依 `AGENTS.md`；公開 repo 不存放私人規劃文件全文。
+| `page.html` / `style.css` / `app.js` | 五個研究分頁、匯入匯出與按需查詢 |
+| `data_client.js` | 來源、模式分隔、版本保存、快取及正規化 |
+| `engine.js` / `bb_engine.js` | 原 VIX 與布林 |
+| `research_core.js` / `chip_engine.js` | 成本、共用撮合／帳本與九組籌碼基準 |
+| `rev_mom_engine.js` | 月報事件、財報、排序、F20／M30 |
+| `research_statistics.js` | 配對每日淨報酬及可重現區塊重抽樣 |
+| `docs/data_contract.md` | 匯入／來源與證據契約 |
+| `tests/` / `scripts/check_public_assets.py` | 合成回歸、無資料離線建置與公開 artifact 檢查 |
+| `AGENTS.md` / `.agents/skills/vix-atlas-project-control/SKILL.md` | 雲端控制及專案交接流程 |

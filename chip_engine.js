@@ -90,7 +90,11 @@ const ChipEngine = (() => {
     return true;
   }
   function simulatePortfolio(universe,options={}) {
-    const generated=createSignals(universe,options),p=generated.options,cal=universe.calendar,signals=generated.signals;
+    return simulateSignals(universe,createSignals(universe,options));
+  }
+  function simulateSignals(universe,generated,hooks={}) {
+    const p=generated.options,cal=universe.calendar,signals=generated.signals;
+    const canFill=hooks.executable??executable;
     const maps=new Map(universe.symbols.map(s=>[s.symbol,new Map(s.prices.map(r=>[r.date,r]))]));
     const curve=[],events=[],trades=[],orderEvents=[],ledger=[],positions=new Map(),lastPrices=new Map(),receivables=[];let cash=p.capital,pendingProceeds=0,exposure=0;
     const first=p.start??cal[0],end=p.end??cal.at(-1);
@@ -102,7 +106,7 @@ const ChipEngine = (() => {
         const entry=positions.get(stock.symbol);if(!entry)continue;
         if(a.type==='split'&&a.date===date){
           if(!C.finite(a.ratio)||a.ratio<=0)throw Error('Invalid split ratio');
-          entry.units*=a.ratio;entry.price/=a.ratio;if(lastPrices.has(stock.symbol))lastPrices.set(stock.symbol,lastPrices.get(stock.symbol)/a.ratio);
+          entry.units*=a.ratio;entry.price/=a.ratio;hooks.onSplit?.(entry,a);if(lastPrices.has(stock.symbol))lastPrices.set(stock.symbol,lastPrices.get(stock.symbol)/a.ratio);
         }
         if(a.type==='dividend'&&a.ex_date===date){
           if(!C.finite(a.amount_per_share)||a.amount_per_share<0||!C.validDate(a.paid_date)||a.paid_date<date)throw Error('Invalid dividend action');
@@ -115,7 +119,7 @@ const ChipEngine = (() => {
       const dividendReceivables=()=>receivables.reduce((sum,r)=>sum+r.amount,0);
       const preEquity=cash+marks()+dividendReceivables(),soldToday=new Set();
       const todays=signals.filter(s=>s.executionDate===date),selected=[];let reserved=0;
-      const sectorValue={};for(const [symbol,e] of positions)sectorValue[e.industry]=(sectorValue[e.industry]??0)+e.units*(lastPrices.get(symbol)??e.price);
+      const sectorValue=Object.create(null);for(const [symbol,e] of positions)sectorValue[e.industry]=(sectorValue[e.industry]??0)+e.units*(lastPrices.get(symbol)??e.price);
       // Selection is sealed using prior-close marks, BEFORE observing this open.
       for(const s of todays){
         let reason=null;if(positions.has(s.symbol))reason='ALREADY_HELD';else if(positions.size+selected.length>=p.maxPositions)reason='POSITION_LIMIT';
@@ -125,22 +129,24 @@ const ChipEngine = (() => {
         selected.push({...s,budget});reserved+=budget;sectorValue[s.industry]=(sectorValue[s.industry]??0)+budget;
       }
       for(const [symbol,e] of positions){
-        if(i<e.targetIndex)continue;
+        const exitReasons=hooks.exitReasons?.(e,i)??(i>=e.targetIndex?['MAX_HOLDING']:[]);if(!exitReasons.length)continue;
         const row=maps.get(symbol).get(date);
-        if(!executable(row,p)){orderEvents.push({date,symbol,side:'SELL',status:'BLOCKED',reason:'UNEXECUTABLE',signal_id:e.signal_id});continue;}
+        if(!canFill(row,p)){orderEvents.push({date,symbol,side:'SELL',status:'BLOCKED',reason:'UNEXECUTABLE',reasons:exitReasons,signal_id:e.signal_id});continue;}
         const fill=C.sell(e.units,row.open,p);pendingProceeds+=fill.proceeds;
         const totalProceeds=fill.proceeds+(e.dividend_earned??0);
-        trades.push({...e,exitDate:date,exitPrice:fill.price,exitCommission:fill.commission,tax:fill.tax,proceeds:fill.proceeds,totalProceedsIncludingDividends:totalProceeds,pnl:totalProceeds-e.cost,return:totalProceeds/e.cost-1,holdingDays:i-e.index});
-        events.push({date,symbol,side:'SELL',price:fill.price,units:e.units,signalDate:e.signalDate});positions.delete(symbol);soldToday.add(symbol);
+        trades.push({...e,exitDate:date,exitPrice:fill.price,exitCommission:fill.commission,tax:fill.tax,proceeds:fill.proceeds,totalProceedsIncludingDividends:totalProceeds,pnl:totalProceeds-e.cost,return:totalProceeds/e.cost-1,holdingDays:i-e.index,reasons:exitReasons});
+        events.push({date,symbol,side:'SELL',price:fill.price,units:e.units,signalDate:e.exitSignalDate??e.signalDate});positions.delete(symbol);soldToday.add(symbol);
       }
       for(const s of selected){
         const row=maps.get(s.symbol).get(date);
-        const fill=!soldToday.has(s.symbol)&&executable(row,p)?C.buy(Math.min(s.budget,cash),row.open,p,s.advVolume*p.participation):null;
+        const fill=!soldToday.has(s.symbol)&&canFill(row,p)?C.buy(Math.min(s.budget,cash),row.open,p,s.advVolume*p.participation):null;
         if(!fill){orderEvents.push({...s,date,side:'BUY',status:'CANCELLED',reason:'UNEXECUTABLE_OR_LOT'});continue;}
         const e={...s,...fill,date,index:i,targetIndex:i+p.holding,targetExitDate:cal[i+p.holding]??null};
+        Object.assign(e,hooks.onEntry?.(e,preEquity)??{});
         positions.set(s.symbol,e);cash-=fill.cost;events.push({date,symbol:s.symbol,side:'BUY',price:fill.price,units:fill.units,signalDate:s.signalDate});
       }
       for(const s of universe.symbols){const row=maps.get(s.symbol).get(date);if(row&&C.finite(row.close))lastPrices.set(s.symbol,row.close);}
+      hooks.onClose?.({positions,index:i,date});
       const equity=cash+pendingProceeds+marks()+dividendReceivables();
       if(positions.size)exposure++;
       curve.push({date,equity});ledger.push({date,available_cash:cash,pending_sale_proceeds:pendingProceeds,dividend_receivables:dividendReceivables(),equity,positions:[...positions].map(([symbol,e])=>({symbol,units:e.units,mark:lastPrices.get(symbol)??e.price,targetExitDate:e.targetExitDate}))});
@@ -171,6 +177,6 @@ const ChipEngine = (() => {
     const completed=out.filter(x=>x.status==='CLOSED');
     return {events:out,coverage,count:out.length,completed:completed.length,signalDates:new Set(out.map(x=>x.signalDate)).size,mean:completed.length?C.mean(completed.map(x=>x.netReturn)):null,median:completed.length?completed.map(x=>x.netReturn).sort((a,b)=>a-b)[Math.floor(completed.length/2)]:null};
   }
-  return {configuration,validateUniverse,version,featureAt,rank,createSignals,executable,simulatePortfolio,simulateSingleSymbol:(stock,calendar,options)=>simulatePortfolio({symbols:[stock],calendar},options),eventStudy,horizons};
+  return {configuration,validateUniverse,version,featureAt,rank,createSignals,executable,simulatePortfolio,simulateSignals,simulateSingleSymbol:(stock,calendar,options)=>simulatePortfolio({symbols:[stock],calendar},options),eventStudy,horizons};
 })();
 if(typeof module!=='undefined')module.exports=ChipEngine;

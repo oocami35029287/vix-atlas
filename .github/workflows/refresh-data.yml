@@ -1,48 +1,10 @@
 name: Refresh market data
 on:
   workflow_dispatch:
-    inputs:
-      symbols:
-        description: 'Tickers separated by commas (US or Taiwan), maximum 300; blank refreshes curated 200'
-        required: false
-        default: ''
-  schedule:
-    - cron: '30 23 * * 1-5'
-    - cron: '15 9 * * 1-5'
 permissions:
-  contents: write
-concurrency:
-  group: refresh-market-data
-  cancel-in-progress: false
+  contents: read
 jobs:
-  refresh:
+  frozen:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install 'requests>=2.32,<3'
-      - name: Refresh selected datasets
-        env:
-          REQUESTED_SYMBOLS: ${{ inputs.symbols }}
-          SCHEDULE_EXPR: ${{ github.event.schedule }}
-        run: |
-          if [ -n "$REQUESTED_SYMBOLS" ]; then
-            python refresh_data.py --symbols "$REQUESTED_SYMBOLS"
-          elif [ "$SCHEDULE_EXPR" = '15 9 * * 1-5' ]; then
-            python refresh_data.py --watchlist --market TW
-          elif [ "$SCHEDULE_EXPR" = '30 23 * * 1-5' ]; then
-            python refresh_data.py --watchlist --market US
-          else
-            python refresh_data.py --watchlist
-          fi
-      - name: Commit updated data
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data
-          if ! git diff --cached --quiet; then
-            git commit -m 'Update historical market datasets'
-            git push
-          fi
+      - run: echo 'Snapshots are disabled. The browser queries providers directly; no market data is committed or uploaded.'

@@ -3,3 +3,8 @@ __pycache__/
 preview.png
 .private/
 test-results/
+# Generated observations and code build; never publish data artifacts.
+data/
+sample.json
+index.html
+public/
